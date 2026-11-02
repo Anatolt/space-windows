@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>穹顶 · 舷窗外的星球巡礼</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='26' fill='%2308101c' stroke='%239fb7cf' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='15' fill='%232f5e92'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --ink: rgba(232,238,246,.92);
+    --ink-dim: rgba(196,208,222,.52);
+    --ink-faint: rgba(180,196,214,.30);
+    --line: rgba(200,214,230,.22);
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ width:100%; height:100%; overflow:hidden; background:#000; }
+  body{
+    font-family: ui-sans-serif, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  #stage{ position:fixed; inset:0; cursor:grab; touch-action:none; }
+  #stage.dragging{ cursor:grabbing; }
+  canvas.webgl{ display:block; width:100%; height:100%; }
+
+  /* ---- cinematic overlays ---- */
+  #vignette{ position:fixed; inset:0; pointer-events:none; z-index:3;
+    background:
+      radial-gradient(ellipse 130% 105% at 50% 46%, rgba(0,0,0,0) 52%, rgba(0,0,0,.38) 82%, rgba(2,3,6,.72) 100%);
+  }
+  #grain{ position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:4;
+    opacity:.05; mix-blend-mode:overlay; image-rendering:pixelated; }
+
+  /* ---- loader ---- */
+  #loader{ position:fixed; inset:0; z-index:20; background:#030407;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px;
+    transition:opacity 1.4s ease; }
+  #loader.done{ opacity:0; pointer-events:none; }
+  #loader .t{ font-size:13px; letter-spacing:.55em; text-indent:.55em; color:var(--ink-dim); }
+  #loader .bar{ width:180px; height:1px; background:rgba(255,255,255,.10); position:relative; overflow:hidden; }
+  #loader .bar i{ position:absolute; left:0; top:0; bottom:0; width:0%; background:rgba(210,225,240,.85); transition:width .25s ease; }
+  #loader .s{ font-size:10px; letter-spacing:.3em; text-indent:.3em; color:var(--ink-faint); }
+
+  /* ---- intro title ---- */
+  #intro{ position:fixed; inset:0; z-index:8; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    pointer-events:none; opacity:0; transition:opacity 2.2s ease; gap:14px; }
+  #intro.show{ opacity:1; }
+  #intro h1{ font-weight:200; font-size:clamp(26px,4.4vw,44px); letter-spacing:1.1em; text-indent:1.1em; color:var(--ink); }
+  #intro p{ font-size:11px; letter-spacing:.5em; text-indent:.5em; color:var(--ink-dim); font-weight:300; }
+  #intro .rule{ width:1px; height:34px; background:linear-gradient(to bottom, transparent, var(--line), transparent); }
+
+  /* ---- hud ---- */
+  #hud{ position:fixed; right:22px; bottom:18px; z-index:9; display:flex; align-items:baseline; gap:18px;
+    opacity:0; transition:opacity .8s ease; user-select:none; }
+  #hud.show{ opacity:1; }
+  #hud .grp{ display:flex; align-items:baseline; gap:10px; }
+  #hud button{
+    background:none; border:none; color:var(--ink-faint); font:inherit; font-size:11px; letter-spacing:.18em;
+    padding:4px 2px; cursor:pointer; border-bottom:1px solid transparent; transition:color .3s, border-color .3s;
+  }
+  #hud button:hover{ color:var(--ink); }
+  #hud button.on{ color:var(--ink); border-bottom-color:var(--line); }
+  #hud .sep{ width:1px; height:11px; background:var(--line); transform:translateY(1px); }
+
+  #hint{ position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:9;
+    font-size:11px; letter-spacing:.32em; text-indent:.32em; color:var(--ink-faint); white-space:nowrap;
+    opacity:0; transition:opacity 1s ease; pointer-events:none; user-select:none; }
+  #hint.show{ opacity:1; }
+
+  #toast{ position:fixed; left:50%; top:26px; transform:translateX(-50%); z-index:9;
+    font-size:11px; letter-spacing:.3em; text-indent:.3em; color:var(--ink-dim);
+    opacity:0; transition:opacity .6s ease; pointer-events:none; user-select:none; }
+  #toast.show{ opacity:1; }
+  @media (max-width:640px){
+    #hint{ font-size:10px; letter-spacing:.2em; }
+    #hud{ right:14px; bottom:14px; }
+  }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="vignette"></div>
+  <canvas id="grain" width="160" height="90"></canvas>
+
+  <div id="intro">
+    <h1>穹 顶</h1>
+    <div class="rule"></div>
+    <p>CUPOLA · ORBITAL PLANETARIUM</p>
+  </div>
+
+  <div id="hud">
+    <div class="grp" id="speedGrp">
+      <button data-speed="1" class="on">1×</button>
+      <button data-speed="4">4×</button>
+      <button data-speed="16">16×</button>
+    </div>
+    <div class="sep"></div>
+    <div class="grp">
+      <button id="audioBtn">环境音</button>
+    </div>
+  </div>
+
+  <div id="hint">拖动 / 方向键环视 · 点击舷窗聚焦 · 滚轮变焦</div>
+  <div id="toast"></div>
+
+  <div id="loader">
+    <div class="t">穹顶 · CUPOLA</div>
+    <div class="bar"><i id="loadBar"></i></div>
+    <div class="s" id="loadStep">正在建立轨道链路</div>
+  </div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
